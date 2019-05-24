@@ -475,11 +475,11 @@
 543	common	fspick				sys_fspick
 544	common	pidfd_open			sys_pidfd_open
 # 545 reserved for clone3
-<<<<<<< HEAD
-546	common	process_madvise			sys_process_madvise
-=======
 546	common	close_range			sys_close_range
-547	common	openat2				sys_openat2
-548	common	pidfd_getfd			sys_pidfd_getfd
-549	common	faccessat2			sys_faccessat2
->>>>>>> 9b4feb630e8e (arch: wire-up close_range())
+
+
+
+#547	common	openat2				sys_openat2
+#548	common	pidfd_getfd			sys_pidfd_getfd
+#549	common	faccessat2			sys_faccessat2
+550	common	process_madvise			sys_process_madvise
