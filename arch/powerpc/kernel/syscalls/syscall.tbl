@@ -518,3 +518,4 @@
 434	common	pidfd_open			sys_pidfd_open
 435	nospu	clone3				ppc_clone3
 436	common	process_madvise			sys_process_madvise
+436	common	close_range			sys_close_range
