@@ -671,30 +671,70 @@ EXPORT_SYMBOL(__close_fd); /* for ksys_close() */
  * This closes a range of file descriptors. All file descriptors
  * from @fd up to and including @max_fd are closed.
  */
-int __close_range(struct files_struct *files, unsigned fd, unsigned max_fd)
+int __close_range(unsigned fd, unsigned max_fd, unsigned int flags)
 {
 	unsigned int cur_max;
+	struct task_struct *me = current;
+	struct files_struct *cur_fds = me->files, *fds = NULL;
+
+	if (flags & ~CLOSE_RANGE_UNSHARE)
+		return -EINVAL;
 
 	if (fd > max_fd)
 		return -EINVAL;
 
 	rcu_read_lock();
-	cur_max = files_fdtable(files)->max_fds;
+	cur_max = files_fdtable(cur_fds)->max_fds;
 	rcu_read_unlock();
 
 	/* cap to last valid index into fdtable */
 	cur_max--;
 
+	if (flags & CLOSE_RANGE_UNSHARE) {
+		int ret;
+		unsigned int max_unshare_fds = NR_OPEN_MAX;
+
+		/*
+		 * If the requested range is greater than the current maximum,
+		 * we're closing everything so only copy all file descriptors
+		 * beneath the lowest file descriptor.
+		 */
+		if (max_fd >= cur_max)
+			max_unshare_fds = fd;
+
+		ret = unshare_fd(CLONE_FILES, max_unshare_fds, &fds);
+		if (ret)
+			return ret;
+
+		/*
+		 * We used to share our file descriptor table, and have now
+		 * created a private one, make sure we're using it below.
+		 */
+		if (fds)
+			swap(cur_fds, fds);
+	}
+
 	max_fd = min(max_fd, cur_max);
 	while (fd <= max_fd) {
 		struct file *file;
 
-		file = pick_file(files, fd++);
+		file = pick_file(cur_fds, fd++);
 		if (!file)
 			continue;
 
-		filp_close(file, files);
+		filp_close(file, cur_fds);
 		cond_resched();
+	}
+
+	if (fds) {
+		/*
+		 * We're done closing the files we were supposed to. Time to install
+		 * the new file descriptor table and drop the old one.
+		 */
+		task_lock(me);
+		me->files = cur_fds;
+		task_unlock(me);
+		put_files_struct(fds);
 	}
 
 	return 0;
