@@ -361,12 +361,14 @@ include scripts/subarch.include
 # Alternatively CROSS_COMPILE can be set in the environment.
 # Default value for CROSS_COMPILE is not to prefix executables
 # Note: Some architectures assign CROSS_COMPILE in their arch/*/Makefile
-override ARCH		:= arm64
-override CROSS_COMPILE	:= /home/arter97/arm64-gcc/bin/aarch64-elf-
-override CROSS_COMPILE_ARM32	:= /home/arter97/arm32-gcc/bin/arm-eabi-
-override LLVM := 1
-override CLANG_TRIPLE := aarch64-linux-gnu
-override LLVM_PATH := /home/arter97/android/clang/clang-r416183c1/bin/
+#override ARCH		:= arm64
+#override CROSS_COMPILE	:= /home/arter97/arm64-gcc/bin/aarch64-elf-
+#override CROSS_COMPILE_ARM32	:= /home/arter97/arm32-gcc/bin/arm-eabi-
+#override CROSS_COMPILE := aarch64-elf-
+#override CROSS_COMPILE_ARM32	:= arm-linux-gnueabi-
+#override LLVM := 1
+#override CLANG_TRIPLE := aarch64-linux-gnu
+#override LLVM_PATH := /home/arter97/android/clang/clang-r416183c1/bin/
 
 # Architecture as present in compile.h
 UTS_MACHINE 	:= $(ARCH)
@@ -502,7 +504,7 @@ $(warning "top USERINCLUDE" $(USERINCLUDE))
 $(warning "top LINUXINCLUDE" $(LINUXINCLUDE))
 
 KBUILD_AFLAGS   := -D__ASSEMBLY__ -fno-PIE
-KBUILD_CFLAGS   := -Wall -Wundef -Werror -Wno-trigraphs \
+KBUILD_CFLAGS   := -Wall -Wundef -Wno-trigraphs \
 		   -fno-strict-aliasing -fno-common -fshort-wchar -fno-PIE \
 		   -Wno-format-security \
 		   -std=gnu89
