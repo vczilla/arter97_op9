@@ -415,6 +415,15 @@ static int icnss_stats_show_state(struct seq_file *s, struct icnss_priv *priv)
 			continue;
 		case ICNSS_QMI_DMS_CONNECTED:
 			seq_puts(s, "DMS_CONNECTED");
+			continue;
+		case ICNSS_SLATE_SSR_REGISTERED:
+			seq_puts(s, "SLATE SSR REGISTERED");
+			continue;
+		case ICNSS_SLATE_UP:
+			seq_puts(s, "ICNSS SLATE UP");
+			continue;
+		case ICNSS_LOW_POWER:
+			seq_puts(s, "ICNSS LOW POWER");
 		}
 
 		seq_printf(s, "UNKNOWN-%d", i);
@@ -766,7 +775,7 @@ static int icnss_control_params_debug_show(struct seq_file *s, void *data)
 
 	seq_puts(s, "\nCurrent value:\n");
 
-	seq_printf(s, "qmi_timeout: %u\n", priv->ctrl_params.qmi_timeout);
+	seq_printf(s, "qmi_timeout: %u\n", jiffies_to_msecs(priv->ctrl_params.qmi_timeout));
 
 	return 0;
 }

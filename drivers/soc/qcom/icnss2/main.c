@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
- * Copyright (c) 2015-2020, 2021, The Linux Foundation.
- * All rights reserved.
+ * Copyright (c) 2015-2021, The Linux Foundation. All rights reserved.
  */
 
 #define pr_fmt(fmt) "icnss2: " fmt
@@ -418,6 +417,15 @@ bool icnss_is_pdr(void)
 }
 EXPORT_SYMBOL(icnss_is_pdr);
 
+bool icnss_is_low_power(void)
+{
+	if (!penv)
+		return false;
+	else
+		return test_bit(ICNSS_LOW_POWER, &penv->state);
+}
+EXPORT_SYMBOL(icnss_is_low_power);
+
 static irqreturn_t fw_error_fatal_handler(int irq, void *ctx)
 {
 	struct icnss_priv *priv = ctx;
@@ -613,6 +621,13 @@ static int icnss_driver_event_server_arrive(struct icnss_priv *priv,
 
 	set_bit(ICNSS_WLFW_CONNECTED, &priv->state);
 
+	if (priv->is_slate_rfa && !test_bit(ICNSS_SLATE_UP, &priv->state)) {
+		reinit_completion(&priv->slate_boot_complete);
+		icnss_pr_dbg("Waiting for slate boot up notification, 0x%lx\n",
+			     priv->state);
+		wait_for_completion(&priv->slate_boot_complete);
+	}
+
 	ret = wlfw_ind_register_send_sync_msg(priv);
 	if (ret < 0) {
 		if (ret == -EALREADY) {
@@ -805,6 +820,7 @@ static int icnss_pd_restart_complete(struct icnss_priv *priv)
 	clear_bit(ICNSS_PDR, &priv->state);
 	clear_bit(ICNSS_REJUVENATE, &priv->state);
 	clear_bit(ICNSS_PD_RESTART, &priv->state);
+	clear_bit(ICNSS_LOW_POWER, &priv->state);
 	priv->early_crash_ind = false;
 	priv->is_ssr = false;
 
@@ -1307,7 +1323,8 @@ static int icnss_driver_event_pd_service_down(struct icnss_priv *priv,
 	if (priv->force_err_fatal)
 		ICNSS_ASSERT(0);
 
-	if (priv->device_id == WCN6750_DEVICE_ID) {
+	if (priv->device_id == WCN6750_DEVICE_ID &&
+	    !IS_ERR(priv->smp2p_info.smem_state)) {
 		priv->smp2p_info.seq = 0;
 		if (qcom_smem_state_update_bits(
 				priv->smp2p_info.smem_state,
@@ -1710,6 +1727,18 @@ static char *icnss_subsys_notify_state_to_str(enum subsys_notif_type code)
 		return "SOC_RESET";
 	case SUBSYS_NOTIF_TYPE_COUNT:
 		return "NOTIF_TYPE_COUNT";
+	case SUBSYS_BEFORE_DS_ENTRY:
+		return "BEFORE_DS_ENTRY";
+	case SUBSYS_AFTER_DS_ENTRY:
+		return "AFTER_DS_ENTRY";
+	case SUBSYS_DS_ENTRY_FAIL:
+		return "DS_ENTRY_FAIL";
+	case SUBSYS_BEFORE_DS_EXIT:
+		return "BEFORE_DS_EXIT";
+	case SUBSYS_AFTER_DS_EXIT:
+		return "AFTER_DS_EXIT";
+	case SUBSYS_DS_EXIT_FAIL:
+		return "DS_EXIT_FAIL";
 	default:
 		return "UNKNOWN";
 	}
@@ -1786,14 +1815,44 @@ static int icnss_modem_notifier_nb(struct notifier_block *nb,
 	icnss_pr_vdbg("Modem-Notify: event %s(%lu)\n",
 		      icnss_subsys_notify_state_to_str(code), code);
 
-	if (code == SUBSYS_AFTER_SHUTDOWN) {
-		icnss_pr_info("Collecting msa0 segment dump\n");
-		icnss_msa0_ramdump(priv);
+	switch (code) {
+	case SUBSYS_BEFORE_SHUTDOWN:
+		if (!notif->crashed &&
+		    priv->low_power_support) { /* Hibernate */
+			if (test_bit(ICNSS_MODE_ON, &priv->state))
+				icnss_driver_event_post(
+					priv, ICNSS_DRIVER_EVENT_IDLE_SHUTDOWN,
+					ICNSS_EVENT_SYNC_UNINTERRUPTIBLE, NULL);
+			set_bit(ICNSS_LOW_POWER, &priv->state);
+		}
+		break;
+	case SUBSYS_AFTER_SHUTDOWN:
+		/* Collect ramdump only when there was a crash. */
+		if (notif->crashed) {
+			icnss_pr_info("Collecting msa0 segment dump\n");
+			icnss_msa0_ramdump(priv);
+		}
+
+		if (test_bit(ICNSS_LOW_POWER, &priv->state) &&
+			     priv->low_power_support)
+			clear_bit(ICNSS_LOW_POWER, &priv->state);
+		goto out;
+	case SUBSYS_BEFORE_DS_ENTRY:
+		if (test_bit(ICNSS_MODE_ON, &priv->state))
+			icnss_driver_event_post(
+					priv, ICNSS_DRIVER_EVENT_IDLE_SHUTDOWN,
+					ICNSS_EVENT_SYNC_UNINTERRUPTIBLE, NULL);
+		set_bit(ICNSS_LOW_POWER, &priv->state);
+		break;
+	case SUBSYS_AFTER_DS_ENTRY:
+	case SUBSYS_DS_ENTRY_FAIL:
+	case SUBSYS_BEFORE_DS_EXIT:
+		goto out;
+	case SUBSYS_AFTER_DS_EXIT:
+		clear_bit(ICNSS_LOW_POWER, &priv->state);
+	default:
 		goto out;
 	}
-
-	if (code != SUBSYS_BEFORE_SHUTDOWN)
-		goto out;
 
 	priv->is_ssr = true;
 
@@ -1871,6 +1930,43 @@ static int icnss_wpss_ssr_register_notifier(struct icnss_priv *priv)
 	return ret;
 }
 
+static int icnss_slate_notifier_nb(struct notifier_block *nb,
+				   unsigned long code,
+				   void *data)
+{
+	struct icnss_priv *priv = container_of(nb, struct icnss_priv,
+					       slate_ssr_nb);
+	int ret = 0;
+
+	icnss_pr_vdbg("Slate-subsys-notify: event %lu\n", code);
+
+	if (code == SUBSYS_AFTER_POWERUP) {
+		set_bit(ICNSS_SLATE_UP, &priv->state);
+		complete(&priv->slate_boot_complete);
+		icnss_pr_dbg("Slate boot complete, state: 0x%lx\n",
+			     priv->state);
+	} else if (code == SUBSYS_BEFORE_SHUTDOWN &&
+		   test_bit(ICNSS_SLATE_UP, &priv->state)) {
+		clear_bit(ICNSS_SLATE_UP, &priv->state);
+		if (test_bit(ICNSS_PD_RESTART, &priv->state)) {
+			icnss_pr_err("PD_RESTART in progress 0x%lx\n",
+				     priv->state);
+			goto skip_pdr;
+		}
+
+		icnss_pr_dbg("Initiating PDR 0x%lx\n", priv->state);
+		ret = icnss_trigger_recovery(&priv->pdev->dev);
+		if (ret < 0) {
+			icnss_fatal_err("Fail to trigger PDR: ret: %d, state: 0x%lx\n",
+					ret, priv->state);
+			goto skip_pdr;
+		}
+	}
+
+skip_pdr:
+	return NOTIFY_OK;
+}
+
 static int icnss_modem_ssr_register_notifier(struct icnss_priv *priv)
 {
 	int ret = 0;
@@ -1915,6 +2011,37 @@ static int icnss_modem_ssr_unregister_notifier(struct icnss_priv *priv)
 	subsys_notif_unregister_notifier(priv->modem_notify_handler,
 					 &priv->modem_ssr_nb);
 	priv->modem_notify_handler = NULL;
+
+	return 0;
+}
+
+static int icnss_slate_ssr_register_notifier(struct icnss_priv *priv)
+{
+	int ret = 0;
+
+	priv->slate_ssr_nb.notifier_call = icnss_slate_notifier_nb;
+
+	priv->slate_notify_handler =
+		subsys_notif_register_notifier("slatefw", &priv->slate_ssr_nb);
+
+	if (IS_ERR(priv->slate_notify_handler)) {
+		ret = PTR_ERR(priv->slate_notify_handler);
+		icnss_pr_err("SLATE register notifier failed: %d\n", ret);
+	}
+
+	set_bit(ICNSS_SLATE_SSR_REGISTERED, &priv->state);
+
+	return ret;
+}
+
+static int icnss_slate_ssr_unregister_notifier(struct icnss_priv *priv)
+{
+	if (!test_and_clear_bit(ICNSS_SLATE_SSR_REGISTERED, &priv->state))
+		return 0;
+
+	subsys_notif_unregister_notifier(priv->slate_notify_handler,
+					 &priv->slate_ssr_nb);
+	priv->slate_notify_handler = NULL;
 
 	return 0;
 }
@@ -2213,6 +2340,10 @@ static int icnss_enable_recovery(struct icnss_priv *priv)
 	}
 
 	icnss_modem_ssr_register_notifier(priv);
+
+	if (priv->is_slate_rfa)
+		icnss_slate_ssr_register_notifier(priv);
+
 	if (test_bit(SSR_ONLY, &priv->ctrl_params.quirks)) {
 		icnss_pr_dbg("PDR disabled through module parameter\n");
 		return 0;
@@ -3617,6 +3748,19 @@ static int icnss_resource_parse(struct icnss_priv *priv)
 				priv->ce_irqs[i] = res->start;
 			}
 		}
+
+		if (of_property_read_bool(pdev->dev.of_node,
+					  "qcom,is_slate_rfa")) {
+			priv->is_slate_rfa = true;
+			icnss_pr_err("SLATE rfa is enabled\n");
+		}
+
+		if (of_property_read_bool(pdev->dev.of_node,
+					  "qcom,is_low_power")) {
+			priv->low_power_support = true;
+			icnss_pr_dbg("Deep Sleep/Hibernate mode supported\n");
+		}
+
 	} else if (priv->device_id == WCN6750_DEVICE_ID) {
 		res = platform_get_resource_byname(pdev, IORESOURCE_MEM,
 						   "msi_addr");
@@ -3912,7 +4056,7 @@ static inline void  icnss_get_smp2p_info(struct icnss_priv *priv)
 					    "wlan-smp2p-out",
 					    &priv->smp2p_info.smem_bit);
 	if (IS_ERR(priv->smp2p_info.smem_state)) {
-		icnss_pr_smp2p("Failed to get smem state %d",
+		icnss_pr_err("Failed to get smem state %d",
 			     PTR_ERR(priv->smp2p_info.smem_state));
 	}
 
@@ -4066,6 +4210,9 @@ static int icnss_probe(struct platform_device *pdev)
 
 	init_completion(&priv->unblock_shutdown);
 
+	if (priv->is_slate_rfa)
+		init_completion(&priv->slate_boot_complete);
+
 	if (priv->device_id == WCN6750_DEVICE_ID) {
 		ret = icnss_dms_init(priv);
 		if (ret)
@@ -4128,6 +4275,9 @@ static int icnss_remove(struct platform_device *pdev)
 	icnss_sysfs_destroy(priv);
 
 	complete_all(&priv->unblock_shutdown);
+
+	if (priv->is_slate_rfa)
+		icnss_slate_ssr_unregister_notifier(priv);
 
 	destroy_ramdump_device(priv->msa0_dump_dev);
 

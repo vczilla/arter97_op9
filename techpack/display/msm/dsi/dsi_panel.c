@@ -684,6 +684,10 @@ static int dsi_panel_power_off(struct dsi_panel *panel)
 {
 	int rc = 0;
 
+	if (panel->is_twm_en) {
+		DSI_DEBUG("TWM Enabled, skip panel power off\n");
+		return rc;
+	}
 	if (gpio_is_valid(panel->reset_config.disp_en_gpio))
 		gpio_set_value(panel->reset_config.disp_en_gpio, 0);
 
@@ -964,8 +968,6 @@ static int dsi_panel_update_backlight(struct dsi_panel *panel,
 				hbm_brightness_flag = 0;
 			}
 		}
-
-		DSI_ERR("backlight = %d\n", bl_lvl);
 
 		if (dsi_panel_name == DSI_PANEL_SAMSUNG_AMB670YF01) {
 			if(bl_lvl >= PANEL_MAX_NOMAL_BRIGHTNESS)
@@ -1420,6 +1422,9 @@ static int dsi_panel_parse_pixel_format(struct dsi_host_common_cfg *host,
 		break;
 	case 18:
 		fmt = DSI_PIXEL_FORMAT_RGB666;
+		break;
+	case 30:
+		fmt = DSI_PIXEL_FORMAT_RGB101010;
 		break;
 	case 24:
 	default:
@@ -5282,6 +5287,10 @@ int dsi_panel_set_nolp(struct dsi_panel *panel)
 		return -EINVAL;
 	}
 
+	if (panel->is_twm_en) {
+		DSI_DEBUG("TWM Enabled, skip idle off\n");
+		return rc;
+	}
 	mutex_lock(&panel->panel_lock);
 	if (!panel->panel_initialized)
 		goto exit;
@@ -5842,6 +5851,11 @@ int dsi_panel_disable(struct dsi_panel *panel)
 	if (!panel) {
 		DSI_ERR("invalid params\n");
 		return -EINVAL;
+	}
+
+	if (panel->is_twm_en) {
+		DSI_DEBUG("TWM Enabled, skip panel disable\n");
+		return rc;
 	}
 
 	DSI_ERR("start\n");

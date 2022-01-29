@@ -672,21 +672,14 @@ static int ffs_ep0_open(struct inode *inode, struct file *file)
 
 	ffs_log("state %d setup_state %d flags %lu opened %d", ffs->state,
 		ffs->setup_state, ffs->flags, atomic_read(&ffs->opened));
-	if (atomic_read(&ffs->opened)) {
-		pr_err("ep0 is already opened!\n");
-		return -EBUSY;
-	}
 
-	if (unlikely(ffs->state == FFS_CLOSING)) {
-		pr_err("FFS_CLOSING!\n");
+	if (unlikely(ffs->state == FFS_CLOSING))
 		return -EBUSY;
-	}
 
 	file->private_data = ffs;
 	ffs_data_opened(ffs);
-	pr_info("ep0_open success!\n");
 
-	return 0;
+	return stream_open(inode, file);
 }
 
 static int ffs_ep0_release(struct inode *inode, struct file *file)
@@ -1205,24 +1198,24 @@ static ssize_t ffs_epfile_io(struct file *file, struct ffs_io_data *io_data)
 			}
 		}
 
-		ffs_log("%s:ep status %d for req %pK", epfile->name, ep->status,
-				req);
-
 		if (interrupted) {
 			ret = -EINTR;
 			goto error_mutex;
 		}
 
-		ret = -ENODEV;
 		spin_lock_irq(&epfile->ffs->eps_lock);
 		/*
 		 * While we were acquiring lock endpoint got
 		 * disabled (disconnect) or changed
 		 * (composition switch) ?
 		 */
-		if (epfile->ep == ep)
-			ret = ep->status;
+		if (epfile->ep != ep) {
+			ret = -ESHUTDOWN;
+			goto error_lock;
+		}
+		ret = ep->status;
 		spin_unlock_irq(&epfile->ffs->eps_lock);
+		ffs_log("%s:ep status %d for req %pK", epfile->name, ret, req);
 		if (io_data->read && ret > 0)
 			ret = __ffs_epfile_read_data(epfile, data, ep->status,
 						     &io_data->data);
@@ -1296,7 +1289,7 @@ ffs_epfile_open(struct inode *inode, struct file *file)
 	ffs_data_opened(epfile->ffs);
 	atomic_inc(&epfile->opened);
 
-	return 0;
+	return stream_open(inode, file);
 }
 
 static int ffs_aio_cancel(struct kiocb *kiocb)
@@ -2019,14 +2012,19 @@ static void ffs_data_clear(struct ffs_data *ffs)
 		ffs_epfiles_destroy(ffs->epfiles, ffs->eps_count);
 		ffs->epfiles = NULL;
 	}
-	mutex_unlock(&ffs->mutex);
 
-	if (ffs->ffs_eventfd)
+	if (ffs->ffs_eventfd) {
 		eventfd_ctx_put(ffs->ffs_eventfd);
+		ffs->ffs_eventfd = NULL;
+	}
 
 	kfree(ffs->raw_descs_data);
+	ffs->raw_descs_data = NULL;
 	kfree(ffs->raw_strings);
+	ffs->raw_strings = NULL;
 	kfree(ffs->stringtabs);
+	ffs->stringtabs = NULL;
+	mutex_unlock(&ffs->mutex);
 }
 
 static void ffs_data_reset(struct ffs_data *ffs)
@@ -2038,10 +2036,7 @@ static void ffs_data_reset(struct ffs_data *ffs)
 
 	ffs_data_clear(ffs);
 
-	ffs->raw_descs_data = NULL;
 	ffs->raw_descs = NULL;
-	ffs->raw_strings = NULL;
-	ffs->stringtabs = NULL;
 
 	ffs->raw_descs_length = 0;
 	ffs->fs_descs_count = 0;
@@ -3343,6 +3338,7 @@ static inline struct f_fs_opts *ffs_do_functionfs_bind(struct usb_function *f,
 	struct ffs_function *func = ffs_func_from_usb(f);
 	struct f_fs_opts *ffs_opts =
 		container_of(f->fi, struct f_fs_opts, func_inst);
+	struct ffs_data *ffs = ffs_opts->dev->ffs_data;
 	struct ffs_data *ffs_data;
 	int ret;
 
@@ -3377,8 +3373,10 @@ static inline struct f_fs_opts *ffs_do_functionfs_bind(struct usb_function *f,
 	 */
 	if (!ffs_opts->refcnt) {
 		ret = functionfs_bind(func->ffs, c->cdev);
-		if (ret)
+		if (ret) {
+			ffs_log("functionfs_bind returned %d", ret);
 			return ERR_PTR(ret);
+		}
 	}
 	ffs_opts->refcnt++;
 	func->function.strings = func->ffs->stringtabs;
