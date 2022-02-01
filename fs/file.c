@@ -20,8 +20,6 @@
 #include <linux/spinlock.h>
 #include <linux/rcupdate.h>
 #include <linux/close_range.h>
-#include <net/sock.h>
-#include <linux/io_uring.h>
 
 unsigned int sysctl_nr_open __read_mostly = 1024*1024;
 unsigned int sysctl_nr_open_min = BITS_PER_LONG;
@@ -453,7 +451,6 @@ void exit_files(struct task_struct *tsk)
 	struct files_struct * files = tsk->files;
 
 	if (files) {
-		io_uring_files_cancel(files);
 		task_lock(tsk);
 		tsk->files = NULL;
 		task_unlock(tsk);
@@ -555,14 +552,9 @@ static int alloc_fd(unsigned start, unsigned flags)
 	return __alloc_fd(current->files, start, rlimit(RLIMIT_NOFILE), flags);
 }
 
-int __get_unused_fd_flags(unsigned flags, unsigned long nofile)
-{
-	return __alloc_fd(current->files, 0, nofile, flags);
-}
-
 int get_unused_fd_flags(unsigned flags)
 {
-	return __get_unused_fd_flags(flags, rlimit(RLIMIT_NOFILE));
+	return __alloc_fd(current->files, 0, rlimit(RLIMIT_NOFILE), flags);
 }
 EXPORT_SYMBOL(get_unused_fd_flags);
 
@@ -628,10 +620,6 @@ void __fd_install(struct files_struct *files, unsigned int fd,
 	rcu_read_unlock_sched();
 }
 
-/*
- * This consumes the "file" refcount, so callers should treat it
- * as if they had called fput(file).
- */
 void fd_install(unsigned int fd, struct file *file)
 {
 	__fd_install(current->files, fd, file);
@@ -639,18 +627,32 @@ void fd_install(unsigned int fd, struct file *file)
 
 EXPORT_SYMBOL(fd_install);
 
+/**
+ * pick_file - return file associatd with fd
+ * @files: file struct to retrieve file from
+ * @fd: file descriptor to retrieve file for
+ *
+ * If this functions returns an EINVAL error pointer the fd was beyond the
+ * current maximum number of file descriptors for that fdtable.
+ *
+ * Returns: The file associated with @fd, on error returns an error pointer.
+ */
 static struct file *pick_file(struct files_struct *files, unsigned fd)
 {
-	struct file *file = NULL;
+	struct file *file;
 	struct fdtable *fdt;
 
 	spin_lock(&files->file_lock);
 	fdt = files_fdtable(files);
-	if (fd >= fdt->max_fds)
+	if (fd >= fdt->max_fds) {
+		file = ERR_PTR(-EINVAL);
 		goto out_unlock;
+	}
 	file = fdt->fd[fd];
-	if (!file)
+	if (!file) {
+		file = ERR_PTR(-EBADF);
 		goto out_unlock;
+	}
 	rcu_assign_pointer(fdt->fd[fd], NULL);
 	__put_unused_fd(files, fd);
 
@@ -667,24 +669,29 @@ int __close_fd(struct files_struct *files, unsigned fd)
 	struct file *file;
 
 	file = pick_file(files, fd);
-	if (!file)
+	if (IS_ERR(file))
 		return -EBADF;
 
 	return filp_close(file, files);
 }
 EXPORT_SYMBOL(__close_fd); /* for ksys_close() */
 
+static inline unsigned last_fd(struct fdtable *fdt)
+{
+	return fdt->max_fds - 1;
+}
+
 static inline void __range_cloexec(struct files_struct *cur_fds,
 				   unsigned int fd, unsigned int max_fd)
 {
 	struct fdtable *fdt;
 
-	if (fd > max_fd)
-		return;
-
+	/* make sure we're using the correct maximum value */
 	spin_lock(&cur_fds->file_lock);
 	fdt = files_fdtable(cur_fds);
-	bitmap_set(fdt->close_on_exec, fd, max_fd - fd + 1);
+	max_fd = min(last_fd(fdt), max_fd);
+	if (fd <= max_fd)
+		bitmap_set(fdt->close_on_exec, fd, max_fd - fd + 1);
 	spin_unlock(&cur_fds->file_lock);
 }
 
@@ -695,11 +702,16 @@ static inline void __range_close(struct files_struct *cur_fds, unsigned int fd,
 		struct file *file;
 
 		file = pick_file(cur_fds, fd++);
-		if (!file)
+		if (!IS_ERR(file)) {
+			/* found a valid file to close */
+			filp_close(file, cur_fds);
+			cond_resched();
 			continue;
+		}
 
-		filp_close(file, cur_fds);
-		cond_resched();
+		/* beyond the last fd in that table */
+		if (PTR_ERR(file) == -EINVAL)
+			return;
 	}
 }
 
@@ -714,7 +726,6 @@ static inline void __range_close(struct files_struct *cur_fds, unsigned int fd,
  */
 int __close_range(unsigned fd, unsigned max_fd, unsigned int flags)
 {
-	unsigned int cur_max;
 	struct task_struct *me = current;
 	struct files_struct *cur_fds = me->files, *fds = NULL;
 
@@ -724,24 +735,26 @@ int __close_range(unsigned fd, unsigned max_fd, unsigned int flags)
 	if (fd > max_fd)
 		return -EINVAL;
 
-	rcu_read_lock();
-	cur_max = files_fdtable(cur_fds)->max_fds;
-	rcu_read_unlock();
-
-	/* cap to last valid index into fdtable */
-	cur_max--;
-
 	if (flags & CLOSE_RANGE_UNSHARE) {
 		int ret;
 		unsigned int max_unshare_fds = NR_OPEN_MAX;
 
 		/*
-		 * If the requested range is greater than the current maximum,
-		 * we're closing everything so only copy all file descriptors
-		 * beneath the lowest file descriptor.
+		 * If the caller requested all fds to be made cloexec we always
+		 * copy all of the file descriptors since they still want to
+		 * use them.
 		 */
-		if (max_fd >= cur_max)
-			max_unshare_fds = fd;
+		if (!(flags & CLOSE_RANGE_CLOEXEC)) {
+			/*
+			 * If the requested range is greater than the current
+			 * maximum, we're closing everything so only copy all
+			 * file descriptors beneath the lowest file descriptor.
+			 */
+			rcu_read_lock();
+			if (max_fd >= last_fd(files_fdtable(cur_fds)))
+				max_unshare_fds = fd;
+			rcu_read_unlock();
+		}
 
 		ret = unshare_fd(CLONE_FILES, max_unshare_fds, &fds);
 		if (ret)
@@ -754,8 +767,6 @@ int __close_range(unsigned fd, unsigned max_fd, unsigned int flags)
 		if (fds)
 			swap(cur_fds, fds);
 	}
-
-	max_fd = min(max_fd, cur_max);
 
 	if (flags & CLOSE_RANGE_CLOEXEC)
 		__range_cloexec(cur_fds, fd, max_fd);
@@ -777,9 +788,7 @@ int __close_range(unsigned fd, unsigned max_fd, unsigned int flags)
 }
 
 /*
- * variant of __close_fd that gets a ref on the file for later fput.
- * The caller must ensure that filp_close() called on the file, and then
- * an fput().
+ * variant of __close_fd that gets a ref on the file for later fput
  */
 int __close_fd_get_file(unsigned int fd, struct file **res)
 {
@@ -799,7 +808,7 @@ int __close_fd_get_file(unsigned int fd, struct file **res)
 	spin_unlock(&files->file_lock);
 	get_file(file);
 	*res = file;
-	return 0;
+	return filp_close(file, files);
 
 out_unlock:
 	spin_unlock(&files->file_lock);
@@ -843,9 +852,9 @@ void do_close_on_exec(struct files_struct *files)
 	spin_unlock(&files->file_lock);
 }
 
-static struct file *__fget_files(struct files_struct *files, unsigned int fd,
-				 fmode_t mask, unsigned int refs)
+static struct file *__fget(unsigned int fd, fmode_t mask, unsigned int refs)
 {
+	struct files_struct *files = current->files;
 	struct file *file;
 
 	rcu_read_lock();
@@ -860,16 +869,14 @@ loop:
 			file = NULL;
 		else if (!get_file_rcu_many(file, refs))
 			goto loop;
+		else if (__fcheck_files(files, fd) != file) {
+			fput_many(file, refs);
+			goto loop;
+		}
 	}
 	rcu_read_unlock();
 
 	return file;
-}
-
-static inline struct file *__fget(unsigned int fd, fmode_t mask,
-				  unsigned int refs)
-{
-	return __fget_files(current->files, fd, mask, refs);
 }
 
 struct file *fget_many(unsigned int fd, unsigned int refs)
@@ -888,18 +895,6 @@ struct file *fget_raw(unsigned int fd)
 	return __fget(fd, 0, 1);
 }
 EXPORT_SYMBOL(fget_raw);
-
-struct file *fget_task(struct task_struct *task, unsigned int fd)
-{
-	struct file *file = NULL;
-
-	task_lock(task);
-	if (task->files)
-		file = __fget_files(task->files, fd, 0, 1);
-	task_unlock(task);
-
-	return file;
-}
 
 /*
  * Lightweight file lookup - no refcnt increment if fd table isn't shared.
@@ -1061,62 +1056,6 @@ out_unlock:
 	return err;
 }
 
-/**
- * __receive_fd() - Install received file into file descriptor table
- *
- * @fd: fd to install into (if negative, a new fd will be allocated)
- * @file: struct file that was received from another process
- * @ufd: __user pointer to write new fd number to
- * @o_flags: the O_* flags to apply to the new fd entry
- *
- * Installs a received file into the file descriptor table, with appropriate
- * checks and count updates. Optionally writes the fd number to userspace, if
- * @ufd is non-NULL.
- *
- * This helper handles its own reference counting of the incoming
- * struct file.
- *
- * Returns newly install fd or -ve on error.
- */
-int __receive_fd(int fd, struct file *file, int __user *ufd, unsigned int o_flags)
-{
-	int new_fd;
-	int error;
-
-	error = security_file_receive(file);
-	if (error)
-		return error;
-
-	if (fd < 0) {
-		new_fd = get_unused_fd_flags(o_flags);
-		if (new_fd < 0)
-			return new_fd;
-	} else {
-		new_fd = fd;
-	}
-
-	if (ufd) {
-		error = put_user(new_fd, ufd);
-		if (error) {
-			if (fd < 0)
-				put_unused_fd(new_fd);
-			return error;
-		}
-	}
-
-	if (fd < 0) {
-		fd_install(new_fd, get_file(file));
-	} else {
-		error = replace_fd(new_fd, file, o_flags);
-		if (error)
-			return error;
-	}
-
-	/* Bump the sock usage counts, if any. */
-	__receive_sock(file);
-	return new_fd;
-}
-
 static int ksys_dup3(unsigned int oldfd, unsigned int newfd, int flags)
 {
 	int err = -EBADF;
@@ -1171,7 +1110,7 @@ SYSCALL_DEFINE2(dup2, unsigned int, oldfd, unsigned int, newfd)
 	return ksys_dup3(oldfd, newfd, 0);
 }
 
-SYSCALL_DEFINE1(dup, unsigned int, fildes)
+int ksys_dup(unsigned int fildes)
 {
 	int ret = -EBADF;
 	struct file *file = fget_raw(fildes);
@@ -1184,6 +1123,11 @@ SYSCALL_DEFINE1(dup, unsigned int, fildes)
 			fput(file);
 	}
 	return ret;
+}
+
+SYSCALL_DEFINE1(dup, unsigned int, fildes)
+{
+	return ksys_dup(fildes);
 }
 
 int f_dupfd(unsigned int from, struct file *file, unsigned flags)
