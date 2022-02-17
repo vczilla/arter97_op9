@@ -1,10 +1,7 @@
 #!/bin/bash
-export KERNELDIR=`readlink -f .`
-export RAMFS_SOURCE=`readlink -f $KERNELDIR/ramdisk`
-export PARTITION_SIZE=134217728
+set -x
 
-export OS="11.0.0"
-export SPL="2021-11"
+. ./build_env.sh
 
 echo "kerneldir = $KERNELDIR"
 echo "ramfs_source = $RAMFS_SOURCE"
@@ -18,8 +15,23 @@ if [[ "${1}" == "skip" ]] ; then
 	echo "Skipping Compilation"
 else
 	echo "Compiling kernel"
-	cp defconfig .config
-	make "$@" || exit 1
+	local CONF
+	local SKIP_DEFCONFIG
+	local DEFCONF_FILE
+
+	local args=()
+	for i ;do
+		[[ $i =~ ^([gnx]|menu)config$ ]] && { CONF=$i; continue; }
+		[[ $i =~ ^skip_defconfig$ ]] && { SKIP_DEFCONFIG=1; continue; }
+		[[ $i =~ ^(vendor/)?[_-[:alnum:]]+_defconfig$ ]] && { DEFCONF_FILE=$i; continue; }
+		args+=($i)
+	done
+	set ${args[@]}
+
+	[[ -z $SKIP_DEFCONFIG ]] && { : ${DEFCONF_FILE:=arter97-cust_defconfig}; remake ARCH=arm64 CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu CROSS_COMPILE=aarch64-elf- LLVM=1 O=out -j4 $DEFCONF_FILE; }
+	[[ -n $CONF ]] && remake ARCH=arm64 CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu CROSS_COMPILE=aarch64-elf- LLVM=1 O=out -j4 $CONF
+	cp version out
+	remake ARCH=arm64 CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu CROSS_COMPILE=aarch64-elf- LLVM=1 O=out -j4  || exit 1
 fi
 
 echo "Building new ramdisk"
@@ -47,20 +59,20 @@ cd $KERNELDIR
 
 echo "Making new boot image"
 mkbootimg \
-    --kernel $KERNELDIR/arch/arm64/boot/Image.gz \
+    --kernel $KERNELDIR/out/arch/arm64/boot/Image.gz \
     --ramdisk $RAMFS_TMP.cpio.gz \
     --pagesize 4096 \
     --os_version     $OS \
     --os_patch_level $SPL \
     --header_version 3 \
-    -o $KERNELDIR/boot.img
+    -o $KERNELDIR/out/boot.img
 
-GENERATED_SIZE=$(stat -c %s boot.img)
+GENERATED_SIZE=$(stat -c %s $KERNELDIR/out/boot.img)
 if [[ $GENERATED_SIZE -gt $PARTITION_SIZE ]]; then
 	echo "boot.img size larger than partition size!" 1>&2
 	exit 1
 fi
 
 echo "done"
-ls -al boot.img
+ls -al $KERNELDIR/out/boot.img
 echo ""

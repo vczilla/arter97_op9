@@ -83,6 +83,11 @@ ifeq ($(CONFIG_AS_HAS_ARMV8_2), y)
 asm-arch := armv8.2-a
 endif
 
+ifdef asm-arch
+KBUILD_CFLAGS	+= -Wa,-march=$(asm-arch) \
+		   -DARM64_ASM_ARCH='"$(asm-arch)"'
+endif
+
 # Ensure that if the compiler supports branch protection we default it
 # off.
 KBUILD_CFLAGS += $(call cc-option,-mbranch-protection=none)
