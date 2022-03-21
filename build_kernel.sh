@@ -53,14 +53,14 @@ cd $KERNELDIR
 rm -rf $RAMFS_TMP/tmp/*
 
 cd $RAMFS_TMP
-find . | fakeroot cpio -H newc -o | pigz > $RAMFS_TMP.cpio.gz
-ls -lh $RAMFS_TMP.cpio.gz
+find . | fakeroot cpio -H newc -o | lz4 -l > $RAMFS_TMP.cpio.lz4
+ls -lh $RAMFS_TMP.cpio.lz4
 cd $KERNELDIR
 
 echo "Making new boot image"
 mkbootimg \
     --kernel $KERNELDIR/out/arch/arm64/boot/Image.gz \
-    --ramdisk $RAMFS_TMP.cpio.gz \
+    --ramdisk $RAMFS_TMP.cpio.lz4 \
     --pagesize 4096 \
     --os_version     $OS \
     --os_patch_level $SPL \

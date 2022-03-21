@@ -304,7 +304,9 @@ static int fuse_dentry_delete(const struct dentry *dentry)
  * look up paths on its own. Instead, we handle the lookup as a special case
  * inside of the write request.
  */
-static void fuse_dentry_canonical_path(const struct path *path, struct path *canonical_path) {
+static void fuse_dentry_canonical_path(const struct path *path,
+				       struct path *canonical_path)
+{
 	struct inode *inode = d_inode(path->dentry);
 	struct fuse_conn *fc = get_fuse_conn(inode);
 	FUSE_ARGS(args);
@@ -482,9 +484,6 @@ static int fuse_create_open(struct inode *dir, struct dentry *entry,
 	struct fuse_entry_out outentry;
 	struct fuse_inode *fi;
 	struct fuse_file *ff;
-#ifdef CONFIG_FUSE_DECOUPLING
-	char *iname;
-#endif
 
 	/* Userspace expects S_IFREG in create mode */
 	BUG_ON((mode & S_IFMT) != S_IFREG);
@@ -520,24 +519,7 @@ static int fuse_create_open(struct inode *dir, struct dentry *entry,
 	args.out_args[0].value = &outentry;
 	args.out_args[1].size = sizeof(outopen);
 	args.out_args[1].value = &outopen;
-#ifdef CONFIG_FUSE_DECOUPLING
-	iname = inode_name(dir);
-	if (iname) {
-		if ((strlen(iname) + entry->d_name.len + 2) <= PATH_MAX) {
-			strlcat(iname, "/", PATH_MAX);
-			strlcat(iname, entry->d_name.name, PATH_MAX);
-		} else {
-			__putname(iname);
-			iname = NULL;
-		}
-	}
-	args.iname = iname;
-#endif
 	err = fuse_simple_request(fc, &args);
-#ifdef CONFIG_FUSE_DECOUPLING
-	if (args.iname)
-		__putname(args.iname);
-#endif
 	if (err)
 		goto out_free_ff;
 
@@ -549,7 +531,7 @@ static int fuse_create_open(struct inode *dir, struct dentry *entry,
 	ff->fh = outopen.fh;
 	ff->nodeid = outentry.nodeid;
 	ff->open_flags = outopen.open_flags;
-	ff->sct = args.sct;
+	fuse_passthrough_setup(fc, ff, &outopen);
 	inode = fuse_iget(dir->i_sb, outentry.nodeid, outentry.generation,
 			  &outentry.attr, entry_attr_timeout(&outentry), 0);
 	if (!inode) {
@@ -1090,7 +1072,7 @@ int fuse_reverse_inval_entry(struct super_block *sb, u64 parent_nodeid,
 	if (!parent)
 		return -ENOENT;
 
-	inode_lock_nested(parent, I_MUTEX_PARENT);
+	inode_lock(parent);
 	if (!S_ISDIR(parent->i_mode))
 		goto unlock;
 
