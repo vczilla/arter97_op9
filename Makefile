@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 5
 PATCHLEVEL = 4
-SUBLEVEL = 181
+SUBLEVEL = 186
 EXTRAVERSION =
 NAME = Kleptomaniac Octopus
 
@@ -364,11 +364,9 @@ include scripts/subarch.include
 #override ARCH		:= arm64
 #override CROSS_COMPILE	:= /home/arter97/arm64-gcc/bin/aarch64-elf-
 #override CROSS_COMPILE_ARM32	:= /home/arter97/arm32-gcc/bin/arm-eabi-
-#override CROSS_COMPILE := aarch64-elf-
-#override CROSS_COMPILE_ARM32	:= arm-linux-gnueabi-
 #override LLVM := 1
 #override CLANG_TRIPLE := aarch64-linux-gnu
-#override LLVM_PATH := /home/arter97/android/clang/clang-r416183c1/bin/
+#override LLVM_PATH := /home/arter97/android/clang/clang-r433403b/bin/
 
 # Architecture as present in compile.h
 UTS_MACHINE 	:= $(ARCH)
