@@ -10,6 +10,12 @@
 #include <linux/module.h>
 #include <asm/neon-intrinsics.h>
 
+#ifdef ARM64_ASM_ARCH
+#define ARM64_ASM_PREAMBLE ".arch " ARM64_ASM_ARCH "\n"
+#else
+#define ARM64_ASM_PREAMBLE
+#endif
+
 void xor_arm64_neon_2(unsigned long bytes, unsigned long *p1,
 	unsigned long *p2)
 {
