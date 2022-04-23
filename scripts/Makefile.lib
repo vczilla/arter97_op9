@@ -241,7 +241,7 @@ quiet_cmd_gzip = GZIP    $@
 
 # DTC
 # ---------------------------------------------------------------------------
-DTC ?= dtc
+DTC ?= $(objtree)/scripts/dtc/dtc
 
 # Silence all DTC warnings by default.
 DTC_FLAGS += -q
@@ -319,11 +319,6 @@ $(obj)/%.dt.yaml: $(src)/%.dts $(DTC) $(DT_TMP_SCHEMA) FORCE
 	$(call if_changed_rule,dtc,yaml)
 
 dtc-tmp = $(subst $(comma),_,$(dot-target).dts.tmp)
-
-# mkdtimg
-#----------------------------------------------------------------------------
-quiet_cmd_mkdtimg = DTBOIMG $@
-cmd_mkdtimg = mkdtimg cfg_create $@ $<
 
 # Concatentate multiple files together
 quiet_cmd_cat = CAT $@

@@ -24,7 +24,7 @@ block=/dev/block/bootdevice/by-name/boot
 is_slot_device=1
 ramdisk_compression=gzip
 " > $KERNELDIR/out/kernelzip/props
-	cp -rp ~/android/anykernel/* $KERNELDIR/out/kernelzip/
+	cp -rp ~/src/anykernel/* $KERNELDIR/out/kernelzip/
 	find $KERNELDIR/out -name '*.dtb' -exec cat {} + > $KERNELDIR/out/kernelzip/dtb
 	cp $KERNELDIR/out/arch/arm64/boot/dtbo.img $KERNELDIR/out/kernelzip/
 	touch $KERNELDIR/out/kernelzip/vendor_boot

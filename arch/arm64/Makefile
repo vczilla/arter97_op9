@@ -10,7 +10,7 @@
 #
 # Copyright (C) 1995-2001 by Russell King
 
-LDFLAGS_vmlinux	:=--no-undefined -X
+LDFLAGS_vmlinux	:=--no-undefined -X -z norelro
 CPPFLAGS_vmlinux.lds = -DTEXT_OFFSET=$(TEXT_OFFSET)
 GZFLAGS		:=-9
 
@@ -84,8 +84,8 @@ asm-arch := armv8.2-a
 endif
 
 ifdef asm-arch
-KBUILD_CFLAGS	+= -Wa,-march=$(asm-arch) \
-		   -DARM64_ASM_ARCH='"$(asm-arch)"'
+KBUILD_CFLAGS  += -Wa,-march=$(asm-arch) \
+                  -DARM64_ASM_ARCH='"$(asm-arch)"'
 endif
 
 # Ensure that if the compiler supports branch protection we default it
@@ -161,17 +161,12 @@ endif
 boot		:= arch/arm64/boot
 KBUILD_IMAGE	:= $(boot)/$(KBUILD_TARGET)
 
-KBUILD_DTBO_IMG := dtbo.img
-
-all:	$(KBUILD_DTBO_IMG) $(KBUILD_TARGET)
+all:	$(KBUILD_TARGET)
 
 Image: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
 
 Image.%: Image
-	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
-
-dtbo.img: $(boot)/dts/dtboimg.cfg dtbs
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
 
 zinstall install:
@@ -186,9 +181,6 @@ vdso_install:
 # We use MRPROPER_FILES and CLEAN_FILES now
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
-
-CLEAN_FILES += $(boot)/Image $(boot)/Image.* $(boot)/dtbo.img
-MRPROPER_FILES += $(boot)/Image $(boot)/Image.* $(boot)/dtbo.img
 
 ifeq ($(KBUILD_EXTMOD),)
 # We need to generate vdso-offsets.h before compiling certain files in kernel/.
