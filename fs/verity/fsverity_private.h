@@ -148,7 +148,7 @@ int __init fsverity_init_signature(void);
 static inline int
 fsverity_verify_signature(const struct fsverity_info *vi,
 			      const struct fsverity_descriptor *desc,
-			  const u8 *signature, size_t sig_size)
+			     size_t sig_size)
 {
 	return 0;
 }

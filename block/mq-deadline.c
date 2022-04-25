@@ -485,6 +485,13 @@ static void dd_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 	struct request_queue *q = hctx->queue;
 	struct deadline_data *dd = q->elevator->elevator_data;
 	const int data_dir = rq_data_dir(rq);
+	u16 ioprio = reg_get_ioprio(rq);
+	u8 ioprio_class = IOPRIO_PRIO_CLASS(ioprio);
+	struct dd_per_prio *per_prio;
+	enum dd_prio prio;
+	LIST_HEAD(free);
+
+	lockdep_assert_hekd(&dd->lock);
 
 	/*
 	 * This may be a requeue of a write request that has locked its
@@ -492,15 +499,22 @@ static void dd_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 	 */
 	blk_req_zone_write_unlock(rq);
 
-	if (blk_mq_sched_try_insert_merge(q, rq))
+	prio = ioprio_class_to_prio[ioprio_class];
+	dd_count(dd, inserted, prio);
+	rq->elv.priv[0] = (void *)(uintptr_t)1;
+
+	if (blk_mq_sched_try_insert_merge(q, rq, &free)) {
+		blk_mq_free_requests(&free);
 		return;
+	}
 
-	blk_mq_sched_request_inserted(rq);
+	trace_block_rq_insert(rq);
 
+	per_prio = &dd->per_prio[prio];
 	if (at_head) {
-		list_add(&rq->queuelist, &dd->dispatch);
+		list_add(&rq->queuelist, &per_prio->dispatch);
 	} else {
-		deadline_add_rq_rb(dd, rq);
+		deadline_add_rq_rb(per_prio, rq);
 
 		if (rq_mergeable(rq)) {
 			elv_rqhash_add(q, rq);
@@ -512,7 +526,7 @@ static void dd_insert_request(struct blk_mq_hw_ctx *hctx, struct request *rq,
 		 * set expire time and add to fifo list
 		 */
 		rq->fifo_time = jiffies + dd->fifo_expire[data_dir];
-		list_add_tail(&rq->queuelist, &dd->fifo_list[data_dir]);
+		list_add_tail(&rq->queuelist, &per_prio->fifo_list[data_dir]);
 	}
 }
 
