@@ -285,8 +285,7 @@ static unsigned int porttrigger_forward(struct sk_buff *skb, const struct xt_act
 	const struct ipt_porttrigger_info *info = par->targinfo;
 	struct ipt_porttrigger *pte;
 	struct ipt_porttrigger *pte2;
-	unsigned short dst_port = 0, dst_tcp_port = 0, dst_udp_port = 0;
-	unsigned short dst_dccp_port = 0, dst_sctp_port = 0;
+	unsigned short dst_port = 0;
 	enum ip_conntrack_info ctinfo;
 	struct nf_conn *ct;
 	enum ip_conntrack_dir dir;
