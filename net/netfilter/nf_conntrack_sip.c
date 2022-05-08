@@ -103,7 +103,7 @@ static struct ctl_table sip_sysctl_tbl[] = {
 	{}
 };
 
-static unsigned int (*nf_nat_sip_hook)
+unsigned int (*nf_nat_sip_hook)
 					(struct sk_buff *skb,
 					unsigned int protoff,
 					unsigned int dataoff,
@@ -312,7 +312,7 @@ void (*nf_nat_sip_seq_adjust_hook)
 			unsigned int protoff,
 			s16 off);
 
-static unsigned int (*nf_nat_sip_expect_hook)
+unsigned int (*nf_nat_sip_expect_hook)
 					(struct sk_buff *skb,
 					unsigned int protoff,
 					unsigned int dataoff,
@@ -324,7 +324,7 @@ static unsigned int (*nf_nat_sip_expect_hook)
 					__read_mostly;
 EXPORT_SYMBOL(nf_nat_sip_expect_hook);
 
-static unsigned int (*nf_nat_sdp_addr_hook)
+unsigned int (*nf_nat_sdp_addr_hook)
 					(struct sk_buff *skb,
 					unsigned int protoff,
 					unsigned int dataoff,
@@ -337,7 +337,7 @@ static unsigned int (*nf_nat_sdp_addr_hook)
 					__read_mostly;
 EXPORT_SYMBOL(nf_nat_sdp_addr_hook);
 
-static unsigned int (*nf_nat_sdp_port_hook)
+unsigned int (*nf_nat_sdp_port_hook)
 					(struct sk_buff *skb,
 					unsigned int protoff,
 					unsigned int dataoff,
@@ -348,7 +348,7 @@ static unsigned int (*nf_nat_sdp_port_hook)
 					u_int16_t port) __read_mostly;
 EXPORT_SYMBOL(nf_nat_sdp_port_hook);
 
-static unsigned int (*nf_nat_sdp_session_hook)
+unsigned int (*nf_nat_sdp_session_hook)
 					(struct sk_buff *skb,
 					unsigned int protoff,
 					unsigned int dataoff,
@@ -359,7 +359,7 @@ static unsigned int (*nf_nat_sdp_session_hook)
 					__read_mostly;
 EXPORT_SYMBOL(nf_nat_sdp_session_hook);
 
-static unsigned int (*nf_nat_sdp_media_hook)
+unsigned int (*nf_nat_sdp_media_hook)
 					(struct sk_buff *skb,
 					unsigned int protoff,
 					unsigned int dataoff,
