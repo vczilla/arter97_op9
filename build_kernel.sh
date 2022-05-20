@@ -15,11 +15,8 @@ if [[ "${1}" == "skip" ]] ; then
 	echo "Skipping Compilation"
 else
 	echo "Compiling kernel"
-	local CONF
-	local SKIP_DEFCONFIG
-	local DEFCONF_FILE
 
-	local args=()
+	args=()
 	for i ;do
 		[[ $i =~ ^([gnx]|menu)config$ ]] && { CONF=$i; continue; }
 		[[ $i =~ ^skip_defconfig$ ]] && { SKIP_DEFCONFIG=1; continue; }
