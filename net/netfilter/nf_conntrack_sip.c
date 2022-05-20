@@ -1915,7 +1915,7 @@ static void sip_tcp_skb_combined_processing(bool skb_is_combined, struct sk_buff
 		oldlen = combined_skb->len - protoff;
 		/* Reset skb->len and skb->tail params before skb split. */
 		skb->len = 0;
-		skb->tail = skb->data;
+		skb_reset_tail_pointer(skb);
 		skb_split(combined_skb, skb, splitlen);
 		/* Headers need to be recalculated since during SIP processing
 		 * headers are calculated based on the change in length of the
