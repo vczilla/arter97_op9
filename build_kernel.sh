@@ -28,10 +28,10 @@ else
 	done
 	set ${args[@]}
 
-	[[ -z $SKIP_DEFCONFIG ]] && { : ${DEFCONF_FILE:=arter97-cust_defconfig}; remake ARCH=arm64 CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu CROSS_COMPILE=aarch64-elf- LLVM=1 O=out -j4 $DEFCONF_FILE; }
-	[[ -n $CONF ]] && remake ARCH=arm64 CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu CROSS_COMPILE=aarch64-elf- LLVM=1 O=out -j4 $CONF
+	[[ -z $SKIP_DEFCONFIG ]] && { : ${DEFCONF_FILE:=arter97-cust_defconfig}; remake ARCH=arm64 CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu CROSS_COMPILE=aarch64-elf- LLVM=1 LLVM_IAS=1 O=out -j4 $DEFCONF_FILE; }
+	[[ -n $CONF ]] && remake ARCH=arm64 CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu CROSS_COMPILE=aarch64-elf- LLVM=1 LLVM_IAS=1  O=out -j4 $CONF
 	cp version out
-	remake ARCH=arm64 CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu CROSS_COMPILE=aarch64-elf- LLVM=1 O=out -j4  || exit 1
+	remake ARCH=arm64 CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu CROSS_COMPILE=aarch64-elf- LLVM=1 LLVM_IAS=1 O=out -j4  || exit 1
 fi
 
 echo "Building new ramdisk"
